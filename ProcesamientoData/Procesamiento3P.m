@@ -64,6 +64,9 @@ for i = 1:length(csvFiles)
         tbl{:, col} = fillmissing(tbl{:, col}, 'nearest')/10;
     end
     
+    tbl.IndiceTiempo = (1:height(tbl))';
+    tbl.FechaHora = [];
+
     % Guardar la tabla en la estructura
     dataTables.(varName) = tbl;
 
