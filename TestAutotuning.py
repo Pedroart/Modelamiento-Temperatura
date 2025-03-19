@@ -1,8 +1,6 @@
 import numpy as np
-import pandas as pd
 import matplotlib.pyplot as plt
-from scipy.optimize import minimize
-from scipy.signal import lti, lsim
+from scipy.optimize import minimize, curve_fit
 
 # Definición de clases
 
@@ -10,109 +8,88 @@ class Bloque:
     def __init__(self, ancho, alto, masa, calorEspecifico):
         self.ancho = ancho
         self.alto = alto
-        self.masa = masa
+        self.masa = max(masa, 0.1)  # Evitar masa cero
         self.calorEspecifico = calorEspecifico
         self.area = ancho * alto
         self.temperatura = 0
 
 class Aire:
-    def __init__(self, c, h):
+    def __init__(self, c):
         self.c = c
-        self.h = h
-        self.temperatura = 0
-        self.velocidadFlujo = 0
+        self.velocidadFlujo = 0.1  # Evitar velocidad cero
         self.densidad = 1.225  # kg/m³
-        self.calorEspecifico = 1.006  # kJ / (°C·kg)
-        self.calcularh()
+        self.calorEspecifico = 1.006  # kJ/(°C·kg)
+        self.temperatura = 0
+        self.coeficientePelicula = 0
 
     def calcularh(self):
-        self.coeficientePelicula = self.c * np.power(self.velocidadFlujo, 0.5)
+        self.coeficientePelicula = max(self.c * np.sqrt(self.velocidadFlujo), 0.1)  # Evitar h=0
 
 class TransferenciaCalor:
     def __init__(self):
         self.bloque = Bloque(1, 1, 1, 900)
-        self.aireIngreso = Aire(10, 0.65)
-        self.aireSalida = Aire(10, 0.65)
+        self.aireIngreso = Aire(10)
+        self.aireSalida = Aire(10)
 
     def transferencia_conveccion_bloque(self):
         h = self.aireIngreso.coeficientePelicula
+        if np.isnan(h) or h <= 0:
+            return
+
         Q = h * self.bloque.area * (self.bloque.temperatura - self.aireIngreso.temperatura)
-
-        # Actualización de temperatura del bloque
-        self.bloque.temperatura += -Q / (self.bloque.masa * self.bloque.calorEspecifico)
-
-        # Cálculo de temperatura del aire de salida
+        self.bloque.temperatura -= Q / (self.bloque.masa * self.bloque.calorEspecifico)
+        
         dm = self.aireIngreso.densidad * self.aireIngreso.velocidadFlujo * self.bloque.area
-        self.aireSalida.temperatura = self.aireIngreso.temperatura + Q / (dm * self.aireIngreso.calorEspecifico)
+        if dm > 0:
+            self.aireSalida.temperatura = self.aireIngreso.temperatura + Q / (dm * self.aireIngreso.calorEspecifico)
 
     def simulacion(self, tempInitBloque, tempInitAire, velAire):
-
         self.bloque.temperatura = tempInitBloque
         self.aireIngreso.temperatura = tempInitAire
-        self.aireIngreso.velocidadFlujo = velAire
+        self.aireIngreso.velocidadFlujo = max(velAire, 0.1)  # Evitar velocidad cero
         self.aireIngreso.calcularh()
 
         tiempo = []
         temperaturas_bloque = []
-        
         t = 0
-        while self.bloque.temperatura > 0.1:
-            print(f"Tiempo: {t} s - Temperatura: {self.bloque.temperatura:.2f} °C")
+
+        while self.bloque.temperatura > 0.1 and t < 1000:
             self.transferencia_conveccion_bloque()
-            if t % 10 == 0:  # Guardamos datos cada 10 segundos
+            if t % 10 == 0:
                 tiempo.append(t)
                 temperaturas_bloque.append(self.bloque.temperatura)
             t += 1
 
         return np.array(tiempo), np.array(temperaturas_bloque)
 
-
-# Simulación con velocidad de aire de 100 m/s
 modelo = TransferenciaCalor()
 tiempo, temperatura = modelo.simulacion(10, 0, 100)
 
-# Autotuning del PID con Ziegler-Nichols
+# Estimación del modelo de primer orden
+def modelo_fopdt(t, K, tau):
+    return K * (1 - np.exp(-t / tau))
 
-def modelo_respuesta(t, K, tau):
-    return 10 * np.exp(-t/tau)
+params_opt, _ = curve_fit(modelo_fopdt, tiempo, temperatura, bounds=([0.1, 0.1], [10, 100]))
+K_opt, tau_opt = params_opt
 
-def error_pid(params):
-    K, tau = params
-    temp_modelo = modelo_respuesta(tiempo, K, tau)
-    return np.sum((temperatura - temp_modelo) ** 2)
+# Simulación del Control PID con parámetros optimizados
+modelo = TransferenciaCalor()
+modelo.bloque.temperatura = 10
 
-print("Iniciando optimización...")
-
-opt_params = minimize(error_pid, [1, 1], bounds=[(0.1, 10), (0.1, 100)])
-K_opt, tau_opt = opt_params.x
-
-# Parámetros del PID (Ziegler-Nichols)
-Kp = 1.2 * (tau_opt / K_opt)
-Ti = 2 * tau_opt
-Td = 0.5 * tau_opt
-
-# Simulación del Control PID
-setpoint = 0  # Temperatura deseada en el bloque
-tiempo_control = np.arange(0, 300, 1)
-temperatura_control = [10]  # Iniciamos en 10°C
+temperatura_control = [modelo.bloque.temperatura]
 error_anterior = 0
 integral = 0
-velocidad_aire = 50  # Velocidad inicial
+velocidad_aire = 50
+setpoint = 5
 
-print("Iniciando simulación con Control PID...")
+tiempo_control = np.arange(0, 100, 1)
 
 for t in tiempo_control[1:]:
-
-    print(f"Tiempo: {t} s - Temperatura: {temperatura_control[-1]:.2f} °C")
-    error = setpoint - temperatura_control[-1]
+    error = setpoint - modelo.bloque.temperatura
     integral += error
     derivativo = error - error_anterior
-    velocidad_aire = Kp * (error + (1/Ti) * integral + Td * derivativo)
+    velocidad_aire = max(10, min(200, Kp_opt * (error + (1 / Ti_opt) * integral + Td_opt * derivativo)))
     
-    # Limitar la velocidad del aire
-    velocidad_aire = max(50, min(100, velocidad_aire))
-    
-    # Simulación con la nueva velocidad de aire
     modelo.aireIngreso.velocidadFlujo = velocidad_aire
     modelo.aireIngreso.calcularh()
     modelo.transferencia_conveccion_bloque()
@@ -121,15 +98,16 @@ for t in tiempo_control[1:]:
     error_anterior = error
 
 # Graficar resultados
-plt.figure(figsize=(8,5))
-plt.plot(tiempo, temperatura, label="Enfriamiento sin control", linestyle="dashed")
-plt.plot(tiempo_control, temperatura_control, label="Control PID", color="red")
-plt.axhline(setpoint, color="black", linestyle="dotted", label="Setpoint")
+plt.figure(figsize=(10, 6))
+plt.plot(tiempo, temperatura, label="Enfriamiento sin control", linestyle="dashed", color="blue")
+plt.plot(tiempo_control, temperatura_control, label="Con PID Optimizado", color="red")
+plt.axhline(setpoint, color="black", linestyle="dotted", label="Setpoint (5°C)")
 plt.xlabel("Tiempo (s)")
 plt.ylabel("Temperatura (°C)")
+plt.title("Comparación de Respuesta del Sistema con y sin PID")
 plt.legend()
-plt.title("Control PID del Bloque")
 plt.grid()
 plt.show()
 
-print(f"PID Tuned: Kp={Kp:.3f}, Ti={Ti:.3f}, Td={Td:.3f}")
+print(f"Modelo Estimado: K={K_opt:.3f}, Tau={tau_opt:.3f}")
+print(f"PID Optimizado (ITAE): Kp={Kp_opt:.3f}, Ti={Ti_opt:.3f}, Td={Td_opt:.3f}")
