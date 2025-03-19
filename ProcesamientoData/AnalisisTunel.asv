@@ -1,0 +1,46 @@
+% Extraer la tabla de análisis
+TunelAnalisis = Agrolatina.tunel_2;
+
+
+
+% Graficar los datos filtrados
+figure;
+plot(TunelAnalisis.IndiceTiempo, TunelAnalisis.TemperaturaAmbiente, 'LineWidth', 1.5);
+hold on;
+plot(TunelAnalisis.IndiceTiempo, TunelAnalisis.TemperaturaRetorno, 'LineWidth', 1.5);
+plot(TunelAnalisis.IndiceTiempo, TunelAnalisis.SensorZona1, 'LineWidth', 1.5);
+plot(TunelAnalisis.IndiceTiempo, [0;diff(TunelAnalisis.TemperaturaAmbiente)], 'LineWidth', 1.5);
+
+% Configurar leyenda y etiquetas
+legend({'TemperaturaAmbiente', 'TemperaturaRetorno', 'SensorZona1', 'diff'}, 'Location', 'Best');
+xlabel('Índice de Tiempo');
+ylabel('Temperatura (°C)');
+title('Análisis de Temperaturas con Filtro de Media Móvil');
+grid on;
+hold off;
+
+%% Filtrado Señal
+
+% Extraer la tabla de análisis
+TunelAnalisis = Agrolatina.tunel_2;
+
+% Obtener la derivada de la señal (diferencias finitas)
+dT = diff(TunelAnalisis.TemperaturaAmbiente); 
+
+% Limitar la derivada en el rango [-1,1]
+dT_limited = max(min(dT, 1), -10);
+
+% Integrar la derivada limitada usando suma acumulativa
+reconstructed_signal = cumsum([TunelAnalisis.TemperaturaAmbiente(1); dT_limited]); 
+
+% Graficar comparación de la señal original y reconstruida
+figure;
+plot(TunelAnalisis.IndiceTiempo, TunelAnalisis.TemperaturaAmbiente, 'b', 'LineWidth', 1.5);
+hold on;
+plot(TunelAnalisis.IndiceTiempo, reconstructed_signal, 'r--', 'LineWidth', 1.5);
+legend({'Señal Original', 'Señal Reconstruida'}, 'Location', 'Best');
+xlabel('Índice de Tiempo');
+ylabel('Temperatura (°C)');
+title('Reconstrucción de Señal a partir de Derivada Limitada');
+grid on;
+hold off;
