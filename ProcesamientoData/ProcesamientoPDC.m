@@ -59,7 +59,7 @@ for i = 1:length(csvFiles)
     
     % Rellenar los valores NaN con el valor más cercano (Interpolación)
     for col = 2:width(tbl) % Saltar la primera columna (FechaHora)
-        tbl{:, col} = fillmissing(tbl{:, col}, 'nearest');
+        tbl{:, col} = fillmissing(tbl{:, col}, 'nearest')/10;
     end
     
     % Guardar la tabla en la estructura
